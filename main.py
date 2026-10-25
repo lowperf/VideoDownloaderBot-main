@@ -1212,6 +1212,15 @@ def _send_choice_ui(message, url: str) -> None:
         MAX_SEND_BYTES,
         skip_size_checks=facebook_video,
     )
+    if not video_candidates:
+        # No size-proven candidate exists. Fall back to offering the best
+        # compatible format anyway and let the download-time size guard
+        # enforce the Telegram limit instead of refusing up front.
+        video_candidates = _build_video_candidates(
+            meta,
+            MAX_SEND_BYTES,
+            skip_size_checks=True,
+        )
     if facebook_video and not video_candidates:
         video_candidates = [
             VideoFormatCandidate(
@@ -1233,7 +1242,9 @@ def _send_choice_ui(message, url: str) -> None:
 
     video_size = video_plan.estimated_size if video_plan and not facebook_video else None
     video_size_known = bool(video_size and video_size > 0)
-    video_ok = bool(video_candidates) if facebook_video else bool(video_size_known and video_size <= MAX_SEND_BYTES)
+    # Unknown-size formats are still offered; the download-time size guard
+    # enforces the Telegram limit rather than refusing up front.
+    video_ok = bool(video_candidates)
 
     if video_size_known and video_size > MAX_SEND_BYTES:
         msg = (
@@ -1276,17 +1287,14 @@ def _send_choice_ui(message, url: str) -> None:
         _safe_send_message(message.chat.id, msg, reply_to_message_id=message.message_id)
         return
 
-    # Unknown-size formats are not offered outside Facebook, where preflight
-    # size probing is intentionally disabled.
+    # If no compatible video format exists at all, offer audio-only when possible.
     if not video_ok:
         msg = (
             f"{title}\n\n"
-            f"I can't reliably determine the final video size before downloading.\n"
+            f"No downloadable video format was found for this link.\n"
             f"Telegram bot upload limit is {_fmt_bytes(MAX_SEND_BYTES)}.\n"
-            f"Please try a shorter video.\n"
         )
 
-        # If audio fits, offer audio
         if audio_plan:
             request_id = uuid.uuid4().hex[:18]
             with state_lock:
@@ -1342,16 +1350,17 @@ def _send_choice_ui(message, url: str) -> None:
         kb.add(types.InlineKeyboardButton("Download as Audio (MP3)", callback_data=f"dl|audio|{request_id}"))
 
     size_kind = "Estimated" if video_plan.estimated_confident else "Approximate"
-    size_line = (
-        "Video size not checked (Facebook)"
-        if facebook_video
-        else f"{size_kind} size: {_fmt_bytes(int(video_size))} (limit {_fmt_bytes(MAX_SEND_BYTES)})"
-    )
+    if facebook_video:
+        size_line = "Video size not checked (Facebook)"
+    elif video_size_known:
+        size_line = f"{size_kind} size: {_fmt_bytes(int(video_size))} (limit {_fmt_bytes(MAX_SEND_BYTES)})"
+    else:
+        size_line = f"Video size unknown (limit {_fmt_bytes(MAX_SEND_BYTES)})"
     info_lines = [
         size_line,
         f"Selected: {video_plan.get('quality_label', 'mp4')}",
     ]
-    if facebook_video:
+    if facebook_video or not video_size_known:
         info_lines.append("Telegram upload limits may still apply.")
     if audio_plan:
         info_lines.append(f"Audio: {audio_plan.get('quality_label', 'mp3')}")

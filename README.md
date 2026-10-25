@@ -107,7 +107,8 @@ The installer will:
 
 * Install **Git**, **Docker**, Compose, `flock`, `curl`, and Python 3 when needed
 * Preserve an existing `.env`, `data/`, and `logs/`
-* Ask for **BOT_TOKEN** only when it is not configured
+* Ask for **BOT_TOKEN** and optionally **TELEGRAM_API_ID** / **TELEGRAM_API_HASH**
+* Configure and start the local Telegram Bot API automatically when API credentials are provided, enabling uploads above 50 MB (500 MiB application limit by default)
 * Build and validate the production image before replacing the container
 * Enable automatic deployment from `origin/main` and nightly yt-dlp image updates
 
@@ -220,7 +221,7 @@ Operational settings are read through the validated `Settings` dataclass:
 * `LOGS_DIR` — rotating application logs
 * `MAX_FILESIZE` — strict upload limit; defaults to `524288000` bytes (500 MiB)
 * `BOT_API_BASE_URL` — Bot API server origin; defaults to `https://api.telegram.org`
-* `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` — credentials from [my.telegram.org](https://my.telegram.org), required to run the optional local Bot API server
+* `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` — credentials from [my.telegram.org](https://my.telegram.org); enter them during `install.sh` setup to enable uploads above 50 MB. The application limit defaults to 500 MiB and can be raised with `MAX_FILESIZE` up to the local Bot API limit (2000 MB).
 * `WORKERS` — download workers; default `2`
 * `MAX_QUEUE` — bounded queue size; default `200`
 * `UPLOAD_WORKERS` — concurrent Telegram uploads; default `2`
@@ -289,9 +290,9 @@ The configured upload limit defaults to 500 MiB. Telegram's public Bot API limit
 
 ### Enable the local Bot API server
 
-1. Create an API ID and hash at [my.telegram.org](https://my.telegram.org), then set `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in `.env`.
-2. Start the local server: `docker compose --profile local-bot-api up -d telegram-bot-api`.
-3. Stop the running bot before switching it from Telegram's public API, then call `logOut` once on the public API so Telegram releases the bot session:
+For a new installation, provide the API ID and hash when `install.sh` prompts for them. The installer writes them to `.env`, enables `COMPOSE_PROFILES=local-bot-api`, points the bot at the local server, and starts that server. Press Enter at the API ID prompt to keep using the public API (50 MiB upload limit).
+
+When migrating an existing bot from the public API, the installer stops it and calls `logOut` on the public API before switching it. If setting up manually instead:
 
    ```bash
    docker compose stop videodownloaderbot
@@ -301,8 +302,12 @@ The configured upload limit defaults to 500 MiB. Telegram's public Bot API limit
    curl -fsS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/logOut"
    ```
 
-4. In `.env`, set `BOT_API_BASE_URL=http://telegram-bot-api:8081`, `MAX_FILESIZE=524288000`, and `COMPOSE_PROFILES=local-bot-api`.
-5. Restart the bot with `docker compose up -d videodownloaderbot`.
+   Then set `BOT_API_BASE_URL=http://telegram-bot-api:8081`, `MAX_FILESIZE=524288000`, and `COMPOSE_PROFILES=local-bot-api` in `.env`, and start the local service and bot:
+
+   ```bash
+   docker compose --profile local-bot-api up -d telegram-bot-api
+   docker compose up -d videodownloaderbot
+   ```
 
 The server is only reachable inside the Compose network and keeps its working data in the persistent `telegram-bot-api-data` volume. Keep `BOT_API_BASE_URL` at its default if you do not enable the local server.
 
@@ -331,10 +336,9 @@ Python dependencies (see `requirements.txt`):
 Regular video/document downloads are intentionally strict and predictable.
 If the bot expects a file won’t fit, it stops early and tells you **before downloading**. Facebook video size is not estimated, so the bot attempts the download without the application-level size cap; the Telegram Bot API server can still reject uploads above its own limit.
 
-### “Unknown size” videos are refused
+### Unknown-size videos are still offered
 
-If the bot can’t reliably determine the final size, it refuses video/document download.
-This avoids wasting time, bandwidth, and disk space on videos that will fail at upload.
+If the bot can't determine the final size up front, it still offers video/document download and lets the download-time size guard enforce the limit. This means an oversized file may only fail once the download reaches the Telegram limit instead of being refused immediately.
 
 ### Telegram compression behavior
 

@@ -75,3 +75,17 @@ def test_installer_preserves_existing_environment_and_uses_main() -> None:
     assert "docker info" in installer
     assert "release_commit" in installer
     assert "yt-dlp-update" in installer
+
+
+def test_installer_enables_local_bot_api_when_credentials_are_provided() -> None:
+    installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "Telegram API ID (press Enter to keep the 50 MB public API limit)" in installer
+    assert 'set_env_value TELEGRAM_API_ID "$api_id" "$env_file"' in installer
+    assert 'set_env_value TELEGRAM_API_HASH "$api_hash" "$env_file"' in installer
+    assert "set_env_value BOT_API_BASE_URL http://telegram-bot-api:8081" in installer
+    assert 'profiles="${profiles:+$profiles,}local-bot-api"' in installer
+    assert "app_compose up -d telegram-bot-api" in installer
+    assert "switch_running_bot_to_local_api" in installer
+    assert "TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}" in compose
+    assert "TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}" in compose

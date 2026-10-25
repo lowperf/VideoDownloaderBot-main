@@ -26,7 +26,7 @@ if [[ "$(id -u)" != "0" ]]; then
     printf 'Run install.sh as root.\n' >&2
     exit 1
   }
-  exec sudo --preserve-env=BOT_TOKEN,APP_NAME,APP_SLUG,INSTALL_SKIP_PREREQUISITES \
+  exec sudo --preserve-env=BOT_TOKEN,TELEGRAM_API_ID,TELEGRAM_API_HASH,APP_NAME,APP_SLUG,INSTALL_SKIP_PREREQUISITES \
     bash "$ROOT_DIR/install.sh" "$@"
 fi
 LIBRARY="$ROOT_DIR/scripts/lib-production.sh"
@@ -36,6 +36,10 @@ LIBRARY="$ROOT_DIR/scripts/lib-production.sh"
 }
 # shellcheck source=scripts/lib-production.sh
 source "$LIBRARY"
+
+LOCAL_BOT_API_ENABLED=0
+PREVIOUS_BOT_API_BASE_URL=""
+PREVIOUS_COMPOSE_PROFILES=""
 
 install_prerequisites() {
   local -a packages=()
@@ -87,7 +91,7 @@ validate_repository() {
 }
 
 prepare_environment() {
-  local env_file="$ROOT_DIR/.env" token owner
+  local env_file="$ROOT_DIR/.env" token owner api_id api_hash profiles
   if [[ ! -f "$env_file" ]]; then
     if [[ -f "$ROOT_DIR/.env-example" ]]; then
       install -m 600 "$ROOT_DIR/.env-example" "$env_file"
@@ -111,6 +115,41 @@ prepare_environment() {
     die "BOT_TOKEN in .env has an invalid format"
   fi
 
+  api_id="$(env_value TELEGRAM_API_ID "$env_file")"
+  api_hash="$(env_value TELEGRAM_API_HASH "$env_file")"
+  api_id="${api_id:-${TELEGRAM_API_ID:-}}"
+  api_hash="${api_hash:-${TELEGRAM_API_HASH:-}}"
+  if [[ -z "$api_id" && -z "$api_hash" && -t 0 ]]; then
+    printf 'Telegram API ID (press Enter to keep the 50 MB public API limit): ' >&2
+    read -r api_id
+    if [[ -n "$api_id" ]]; then
+      printf 'Telegram API hash: ' >&2
+      read -r -s api_hash
+      printf '\n' >&2
+    fi
+  elif [[ -n "$api_id" && -z "$api_hash" && -t 0 ]]; then
+    printf 'Telegram API hash: ' >&2
+    read -r -s api_hash
+    printf '\n' >&2
+  fi
+  if [[ -n "$api_id" || -n "$api_hash" ]]; then
+    [[ "$api_id" =~ ^[0-9]{1,10}$ ]] ||
+      die "TELEGRAM_API_ID must contain 1 to 10 digits"
+    [[ "$api_hash" =~ ^[[:xdigit:]]{32}$ ]] ||
+      die "TELEGRAM_API_HASH must contain 32 hexadecimal characters"
+    set_env_value TELEGRAM_API_ID "$api_id" "$env_file"
+    set_env_value TELEGRAM_API_HASH "$api_hash" "$env_file"
+    PREVIOUS_BOT_API_BASE_URL="$(env_value BOT_API_BASE_URL "$env_file")"
+    PREVIOUS_COMPOSE_PROFILES="$(env_value COMPOSE_PROFILES "$env_file")"
+    set_env_value BOT_API_BASE_URL http://telegram-bot-api:8081 "$env_file"
+    profiles="$(env_value COMPOSE_PROFILES "$env_file")"
+    if [[ ! ",$profiles," =~ ,local-bot-api, ]]; then
+      profiles="${profiles:+$profiles,}local-bot-api"
+      set_env_value COMPOSE_PROFILES "$profiles" "$env_file"
+    fi
+    LOCAL_BOT_API_ENABLED=1
+  fi
+
   if [[ -z "$(env_value OUTPUT_FOLDER "$env_file")" ]]; then
     set_env_value OUTPUT_FOLDER /app/data/downloads "$env_file"
   fi
@@ -132,6 +171,38 @@ prepare_environment() {
 
   mkdir -p "$ROOT_DIR/data" "$ROOT_DIR/logs"
   chown -R 10001:10001 "$ROOT_DIR/data" "$ROOT_DIR/logs"
+}
+
+start_local_bot_api() {
+  if [[ "${LOCAL_BOT_API_ENABLED:-0}" == "1" ]]; then
+    log "Starting the local Telegram Bot API server"
+    app_compose up -d telegram-bot-api
+  fi
+}
+
+switch_running_bot_to_local_api() {
+  local running response env_file="$ROOT_DIR/.env"
+  [[ "$LOCAL_BOT_API_ENABLED" == "1" ]] || return 0
+  case "$PREVIOUS_BOT_API_BASE_URL" in
+    "" | https://api.telegram.org | https://api.telegram.org/) ;;
+    *) return 0 ;;
+  esac
+  read -r running _ < <(container_state)
+  [[ "$running" == "true" ]] || return 0
+
+  log "Switching the running bot from Telegram's public API"
+  app_compose stop "$SERVICE_KEY" ||
+    die "Could not stop the bot before switching its Telegram API"
+  response="$(printf 'url = "https://api.telegram.org/bot%s/logOut"\n' \
+    "$(env_value BOT_TOKEN "$env_file")" |
+    curl -K - -fsS --max-time 30 -X POST 2>/dev/null)" || response=""
+  if [[ ! "$response" =~ \"ok\"[[:space:]]*:[[:space:]]*true ]]; then
+    set_env_value BOT_API_BASE_URL "$PREVIOUS_BOT_API_BASE_URL" "$env_file"
+    set_env_value COMPOSE_PROFILES "$PREVIOUS_COMPOSE_PROFILES" "$env_file"
+    app_compose up -d --no-deps --force-recreate "$SERVICE_KEY" ||
+      log "WARNING: failed to restore the bot after Telegram API logout failed"
+    die "Telegram's public Bot API did not confirm logOut; restored the previous API configuration"
+  fi
 }
 
 # Older versions of these scripts kept rollback state in data/, extra image
@@ -179,6 +250,8 @@ main() {
   acquire_lock 0 || die "Another deployment is running; try again in a minute"
   recover_interrupted_release
   adopt_running_release
+  start_local_bot_api
+  switch_running_bot_to_local_api
   migrate_legacy_state
   release_commit "$(run_git rev-parse HEAD)" install
   install_units || die "Could not install the systemd timers"
