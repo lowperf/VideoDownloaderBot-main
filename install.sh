@@ -4,7 +4,7 @@
 # verified release, and enables automatic deployment for this bot only.
 set -Eeuo pipefail
 
-REPOSITORY="${REPOSITORY:-https://github.com/lowperf/VideoDownloaderBot.git}"
+REPOSITORY="${REPOSITORY:-https://github.com/lowperf/VideoDownloaderBot-main.git}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # `bash <(curl -fsSL .../install.sh)` runs this file without a checkout next to
