@@ -156,6 +156,10 @@ If the build, those checks, container startup, or health stabilization fails, th
 sudo bash scripts/status.sh            # running release, previous release, pending work
 sudo bash scripts/deploy.sh --retry    # try a failed commit again
 sudo bash scripts/rollback.sh          # return to the previous release (run again to undo)
+docker compose restart videodownloaderbot # restart the service
+docker compose ps # to show the bot status
+docker compose logs -f --tail=100 videodownloaderbot # to show the logs
+docker compose stop videodownloaderbot # stop the service
 ```
 
 Deployment logs are stored in `logs/videodownloaderbot-deploy-YYYY-MM-DD.log` for 30 days.
