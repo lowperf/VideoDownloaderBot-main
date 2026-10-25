@@ -246,6 +246,53 @@ def test_facebook_choice_ui_offers_video_when_metadata_has_no_formats(monkeypatc
     assert request.video_candidates[0].size_source == "not-checked"
 
 
+def test_x_choice_ui_offers_video_when_formats_are_not_compatible(monkeypatch) -> None:
+    sent_messages: list[dict] = []
+    pending: dict = {}
+    metadata = {
+        "title": "X video",
+        "formats": [
+            {
+                "format_id": "twitter-hls",
+                "ext": "m3u8",
+                "vcodec": "unknown",
+                "acodec": "unknown",
+            }
+        ],
+    }
+
+    class FakeBot:
+        def reply_to(self, *_args, **_kwargs):
+            return SimpleNamespace(message_id=99)
+
+    monkeypatch.setattr(main, "bot", FakeBot())
+    monkeypatch.setattr(main, "pending_requests", pending)
+    monkeypatch.setattr(main, "_run_metadata_operation", lambda _url: metadata)
+    monkeypatch.setattr(main, "_safe_delete", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main, "_safe_send_message", lambda **kwargs: sent_messages.append(kwargs))
+
+    message = SimpleNamespace(
+        chat=SimpleNamespace(id=2),
+        from_user=SimpleNamespace(id=1),
+        message_id=3,
+    )
+    main._send_choice_ui(message, "https://x.com/user/status/123")
+
+    assert len(sent_messages) == 1
+    assert "No downloadable video format" not in sent_messages[0]["text"]
+    assert "Video size unknown" in sent_messages[0]["text"]
+    assert any(
+        button.text == "Download as Video"
+        for row in sent_messages[0]["reply_markup"].keyboard
+        for button in row
+    )
+    request = next(iter(pending.values()))
+    assert len(request.video_candidates) == 1
+    assert request.video_candidates[0].format_spec == (
+        "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best[ext=mp4]"
+    )
+
+
 def test_instagram_fresh_extraction_rebuilds_candidates(tmp_path, monkeypatch) -> None:
     sent = _prepare(tmp_path, monkeypatch)
     options_seen: list[dict] = []

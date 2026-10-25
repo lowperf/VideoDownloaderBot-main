@@ -85,6 +85,15 @@ def is_facebook_url(url: str) -> bool:
     return any(domain_matches(host, x) for x in ("facebook.com", "fb.com", "fb.watch"))
 
 
+def is_x_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        LOGGER.debug("failed to parse URL while checking X domain", exc_info=True)
+        return False
+    return any(domain_matches(host, x) for x in ("x.com", "twitter.com"))
+
+
 def apply_youtube_runtime_opts(
     opts: dict[str, Any],
     url: str,

@@ -64,6 +64,7 @@ from app.planner import (
 )
 from app.planner import has_downloadable_video as _has_downloadable_video
 from app.planner import is_facebook_url as _is_facebook_url
+from app.planner import is_x_url as _is_x_url
 from app.planner import (
     is_instagram_url as _is_instagram_url,
 )
@@ -1207,6 +1208,7 @@ def _send_choice_ui(message, url: str) -> None:
     title = _strip_hashtags(title) or "Video"
 
     facebook_video = _is_facebook_url(url)
+    x_video = _is_x_url(url)
     video_candidates = _build_video_candidates(
         meta,
         MAX_SEND_BYTES,
@@ -1229,6 +1231,19 @@ def _send_choice_ui(message, url: str) -> None:
                 estimated_size=0,
                 estimated_confident=False,
                 quality_label="Facebook video",
+                compatibility=0,
+                direct_urls=(),
+                size_source="not-checked",
+            )
+        ]
+    elif x_video and not video_candidates:
+        video_candidates = [
+            VideoFormatCandidate(
+                format_spec="best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best[ext=mp4]",
+                merge_output_format="mp4",
+                estimated_size=0,
+                estimated_confident=False,
+                quality_label="X/Twitter video",
                 compatibility=0,
                 direct_urls=(),
                 size_source="not-checked",

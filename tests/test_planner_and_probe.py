@@ -3,6 +3,12 @@ from __future__ import annotations
 from app import planner
 
 
+def test_x_url_recognizes_x_and_twitter_domains() -> None:
+    assert planner.is_x_url("https://x.com/user/status/123")
+    assert planner.is_x_url("https://mobile.twitter.com/user/status/123")
+    assert not planner.is_x_url("https://notx.com/user/status/123")
+
+
 def test_strict_size_planner_reports_confident_size() -> None:
     meta = {
         "duration": 60,
